@@ -22,7 +22,7 @@ angular.module('mm.core.question')
  * @name $mmQuestionHelper
  */
 .factory('$mmQuestionHelper', function($mmUtil, $mmText, $ionicModal, mmQuestionComponent, $mmSitesManager, $mmFilepool, $q,
-            $mmQuestion, $mmSite) {
+            $mmQuestion, $mmSite, $mmQuestionDelegate) {
 
     var self = {},
         lastErrorShown = 0;
@@ -591,8 +591,6 @@ angular.module('mm.core.question')
      * @module mm.core.question
      * @ngdoc method
      * @name $mmQuestionHelper#loadLocalAnswersInHtml
-     * @param  {String} component Component the answers belong to.
-     * @param  {Number} attemptId Attempt ID.
      * @param  {Object} question  Question.
      * @return {Void}
      */
@@ -861,6 +859,38 @@ angular.module('mm.core.question')
     };
 
     /**
+     * Prepare and return the answers.
+     *
+     * @module mm.core.question
+     * @ngdoc method
+     * @name $mmQuestionHelper#prepareAnswers
+     * @param  {Object[]} questions The list of questions.
+     * @param  {Object} answers     The input data.
+     * @param  {Boolean} offline    True if data should be saved in offline.
+     * @param  {String} [siteId]    Site ID. If not defined, current site.
+     * @return {Promise}            Promise resolved with answers to send to server.
+     */
+    self.prepareAnswers = function(questions, answers, offline, siteId) {
+        siteId = siteId || $mmSite.getId();
+
+        var promises = [],
+            error;
+
+        angular.forEach(questions, function(question) {
+            promises.push($mmQuestionDelegate.prepareAnswersForQuestion(question, answers, offline, siteId).catch(function(e) {
+                error = e;
+                return $q.reject();
+            }));
+        });
+
+        return $mmUtil.allPromises(promises).then(function() {
+            return answers;
+        }).catch(function() {
+            return $q.reject(error);
+        });
+    };
+
+    /**
      * Replace Moodle's correct/incorrect classes with the Mobile ones.
      *
      * @module mm.core.question
@@ -927,25 +957,42 @@ angular.module('mm.core.question')
     self.treatCorrectnessIcons = function(scope, element) {
         element = element[0] || element; // Convert from jqLite to plain JS if needed.
 
-        var icons = element.querySelectorAll('.questioncorrectnessicon');
+        var icons = element.querySelectorAll('img.icon, img.questioncorrectnessicon');
         angular.forEach(icons, function(icon) {
-            var parent;
+            // Replace the icon with the font version. This will avoid some errors when adding mm-adapt-img class.
+            if (icon.src) {
+                var newIcon = document.createElement('i');
 
-            // Replace the icon with the local version.
-            if (icon.src && icon.src.indexOf('incorrect') > -1) {
-                icon.src = 'img/icons/grade_incorrect.svg';
-            } else if (icon.src && icon.src.indexOf('correct') > -1) {
-                icon.src = 'img/icons/grade_correct.svg';
+                if (icon.src.indexOf('incorrect') > -1) {
+                    newIcon.className = 'icon fa fa-remove text-danger fa-fw questioncorrectnessicon';
+                } else if (icon.src.indexOf('correct') > -1) {
+                    newIcon.className = 'icon fa fa-check text-success fa-fw questioncorrectnessicon';
+                } else {
+                    return;
+                }
+
+                newIcon.title = icon.title;
+                newIcon.ariaLabel = icon.title;
+                icon.parentNode.replaceChild(newIcon, icon);
+                icon = newIcon;
             }
+        });
 
+        var spans = element.querySelectorAll('.feedbackspan.accesshide');
+        angular.forEach(spans, function(span) {
             // Search if there's a hidden feedback for this element.
-            parent = icon.parentNode;
-            if (!parent) {
+            var icon = span.previousSibling,
+                iconAng;
+            if (!icon) {
                 return;
             }
-            if (!parent.querySelector('.feedbackspan.accesshide')) {
+
+            iconAng = angular.element(icon);
+            if (!iconAng.hasClass('icon') && !iconAng.hasClass('questioncorrectnessicon')) {
                 return;
             }
+
+            iconAng.addClass('questioncorrectnessicon');
 
             // There's a hidden feedback, set up ngClick to show the feedback.
             icon.setAttribute('ng-click', 'questionCorrectnessIconClicked($event)');
